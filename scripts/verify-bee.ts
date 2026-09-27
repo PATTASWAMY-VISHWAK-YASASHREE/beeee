@@ -72,7 +72,7 @@ try {
   record('the Bee CLI is installed and reachable', 'FAIL', hint);
   record('authenticated as a Bee user', 'SKIP', 'no CLI to authenticate');
   record('the real server exposes tools we expect', 'SKIP', 'no connection');
-  record('every tool we may call is read-only', 'SKIP', 'no connection');
+  record('write tools are present and held out of reach', 'SKIP', 'no connection');
   record('a real recall round-trips', 'SKIP', 'no connection');
   record('sanitisation is applied to real content', 'SKIP', 'no connection');
 }
