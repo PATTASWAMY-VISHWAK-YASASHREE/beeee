@@ -104,14 +104,9 @@ If you have the hardware, running that one command converts the biggest
 assumption in this project into evidence. It is the single highest-value thing
 left to do.
 
-## No hardware? The demo still runs.
+## No hardware? Two ways to run it.
 
-There is no Bee simulator, and the real path needs the wearable. So this repo
-ships a **fake `bee` that speaks the real wire protocol** — a genuine
-`initialize` handshake over stdio JSON-RPC, the same tool-call shape — and the
-whole pipeline runs against it, including the attack and the redaction fixtures.
-
-That is how you see the trust boundary with no device:
+### 1. Fixture — one command, no setup
 
 ```bash
 npm run demo              # benign conversation
@@ -119,10 +114,36 @@ npm run demo:attack       # a bystander attempts prompt injection
 npm run demo:secrets      # PII in the transcript, all of it masked
 ```
 
-Then open <http://127.0.0.1:8791> and press **"Try the injection attack"**.
+Open <http://127.0.0.1:8791> and press **"Try the injection attack"**. It is the
+same fixture the tests assert on, so the browser is not showing a mock of a
+mock.
 
-It is the same fixture the test suite uses, so what you see in the browser is
-what the tests assert — not a mock of the mock.
+### 2. Wristbox — your phone becomes the wearable
+
+```bash
+npm run wristbox:lan      # terminal one: stand-in on :8792, prints a token
+```
+
+In a second terminal:
+
+```bash
+BEE_MCP_TRANSPORT=http
+BEE_MCP_HTTP_URL=http://127.0.0.1:8792/mcp
+BEE_MCP_HTTP_TOKEN=<the token it printed>
+npm start
+```
+
+Open the capture URL it prints on your phone, and **speak**. Then ask a
+question in the demo client and watch the sanitiser handle what you actually
+said.
+
+**Wristbox is not Bee.** Amazon ships no simulator, so this is a local
+stand-in we wrote to put *live, improvised speech* in front of the sanitiser.
+The fixture can only replay an attack we wrote ourselves; speaking can be
+anything, including phrasings the detector has never seen — which is the actual
+threat model. See [`dev/wristbox/README.md`](dev/wristbox/README.md) for what it
+does and does not prove, including the fact that browser speech recognition is
+not offline.
 
 ## The MCP surface
 
@@ -191,7 +212,8 @@ src/bee-index.ts      entry point
 public/               demo client: a real MCP client in the browser
 skills/bee-bridge/    the Agent Skill
 tests/fixtures/       a fake `bee` speaking the real protocol
-scripts/              smoke tests
+dev/wristbox/         phone-as-wearable stand-in (not Bee)
+scripts/              smoke tests and the real-Bee verifier
 docs/                 track brief and submission checklist
 ```
 
