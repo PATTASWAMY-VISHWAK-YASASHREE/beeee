@@ -889,7 +889,13 @@ export class BeeClient {
    */
   static async connect(options: BeeClientOptions = {}): Promise<BeeClient> {
     const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    const kind = options.transport ?? (process.env.BEE_MCP_TRANSPORT as BeeTransportKind | undefined) ?? 'stdio';
+    // Every value read from the environment is trimmed. This is not fussiness:
+  // `set BEE_MCP_TRANSPORT=http && next` is an extremely common way to write
+  // these on Windows, and cmd includes the space before the `&&` in the value.
+  // Without a trim that produces "must be stdio or http, not 'http '" -- a
+  // baffling error for something the operator believes they set correctly.
+  const kind =
+    options.transport ?? ((process.env.BEE_MCP_TRANSPORT?.trim() || undefined) as BeeTransportKind | undefined) ?? 'stdio';
     if (kind !== 'stdio' && kind !== 'http') {
       throw new BeePolicyError(
         `BEE_MCP_TRANSPORT must be "stdio" or "http", not "${String(kind)}".`,
@@ -900,8 +906,8 @@ export class BeeClient {
     const transport: BeeTransport =
       kind === 'http'
         ? new HttpTransport(
-            options.endpoint ?? process.env.BEE_MCP_HTTP_URL ?? `http://127.0.0.1:${DEFAULT_HTTP_PORT}/mcp`,
-            options.token ?? process.env.BEE_MCP_HTTP_TOKEN ?? '',
+            options.endpoint ?? process.env.BEE_MCP_HTTP_URL?.trim() ?? `http://127.0.0.1:${DEFAULT_HTTP_PORT}/mcp`,
+            options.token ?? process.env.BEE_MCP_HTTP_TOKEN?.trim() ?? '',
             options.fetchImpl ?? globalThis.fetch,
           )
         : new StdioTransport(options.binary ?? BEE_BIN, options.extraArgs ?? []);

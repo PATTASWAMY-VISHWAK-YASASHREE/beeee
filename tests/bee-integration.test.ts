@@ -90,6 +90,34 @@ describe('Bee client against a live subprocess', () => {
     }
   });
 
+  it('tolerates a trailing space in BEE_MCP_TRANSPORT', async () => {
+    // `set BEE_MCP_TRANSPORT=http && next` is how most people write this on
+    // Windows, and cmd puts the space before the `&&` into the value. Without a
+    // trim that fails with `must be "stdio" or "http", not "http "` -- a
+    // baffling error for something the operator is sure they set correctly.
+    // Found the hard way, by doing it.
+    const saved = process.env.BEE_MCP_TRANSPORT;
+    process.env.BEE_MCP_TRANSPORT = 'http ';
+    try {
+      // The connection cannot succeed -- there is no http Bee here -- so the
+      // thing under test is *which* error comes back. A missing token is a real
+      // answer; "unknown transport" would mean the trim did not happen.
+      let message = '';
+      try {
+        const client = await BeeClient.connect({ timeoutMs: 2000 });
+        await client.close();
+      } catch (error) {
+        message = error instanceof Error ? error.message : String(error);
+      }
+      expect(message).not.toMatch(/must be "stdio" or "http"/);
+      // And it must not be silently ignored either.
+      expect(message).toMatch(/BEE_MCP_HTTP_TOKEN/);
+    } finally {
+      if (saved === undefined) delete process.env.BEE_MCP_TRANSPORT;
+      else process.env.BEE_MCP_TRANSPORT = saved;
+    }
+  });
+
   it('classifies the read-only allow-list correctly', () => {
     expect(isReadOnlyTool('bee_search')).toBe(true);
     expect(isReadOnlyTool('bee_list_facts')).toBe(true);

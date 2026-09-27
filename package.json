@@ -20,7 +20,9 @@
     "demo": "tsx scripts/demo.ts",
     "demo:attack": "tsx scripts/demo.ts injection",
     "demo:secrets": "tsx scripts/demo.ts secrets",
-    "verify:bee": "tsx scripts/verify-bee.ts"
+    "verify:bee": "tsx scripts/verify-bee.ts",
+    "wristbox": "tsx dev/wristbox/index.ts",
+    "wristbox:lan": "tsx dev/wristbox/index.ts --lan"
   },
   "keywords": [
     "mcp",
