@@ -1,0 +1,14 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+.env
+.env.local
+coverage/
+.vitest/
+
+# A synced Bee export is the user's own conversation data. It must never be
+# committed, and this is the one .gitignore rule here that matters for safety
+# rather than tidiness.
+bee-data/
+*.bee-sync.json

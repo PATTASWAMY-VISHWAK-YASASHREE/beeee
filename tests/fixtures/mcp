@@ -1,0 +1,16 @@
+// Test launcher for the fake Bee CLI.
+//
+// The real `bee` binary is invoked as `bee mcp serve`, and `BeeClient` spawns it
+// with `shell: false` so that a search phrase can never become shell syntax.
+// That is correct for production and awkward for a test on Windows: you cannot
+// `spawn` a `.cmd` shim without a shell, and a `.mjs` file is not executable.
+//
+// So instead point `BEE_BIN` at `node` itself. The client then runs
+// `node mcp serve ...`, and Node resolves the leading `mcp` as an entry path
+// relative to the current working directory. The test chdirs into this folder,
+// so `mcp` lands on this file, which simply hands over to the real fixture.
+//
+// The file is intentionally extensionless: it has to be named `mcp` because
+// that is the subcommand the client passes, and the repo's package.json sets
+// "type": "module", so Node loads it as ESM.
+import './fake-bee.mjs';
