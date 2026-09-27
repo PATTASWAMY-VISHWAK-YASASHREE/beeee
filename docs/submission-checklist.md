@@ -10,24 +10,35 @@ fine, a claim that does not survive a judge's five minutes is not.
 
 | # | Item | State | Evidence |
 | --- | --- | --- | --- |
-| 1 | **Working demo** | Done | `npm run start:bee` → <http://127.0.0.1:8791>. Demo client in `public-bee/`. |
-| 2 | **Code repo** | **Needs a remote** | No git remote is configured. See §1 below. |
+| 1 | **Working demo** | Done | `npm start` → <http://127.0.0.1:8791>. No hardware needed: `npm run demo:attack` serves the attack scenario against the fixture. |
+| 2 | **Code repo** | **Ready, not pushed** | Dedicated repo at `bee-bridge/`, committed on `main` (26 files, no Alexa code). Only needs a remote. |
 | 3 | **Product feedback** | Drafted | §3 below. Required field. |
 | 4 | Primary track selected | Done | Bee. |
 | 5 | Build/significantly update during window | To confirm | The project did not exist before the hackathon. |
 
 ## 1. Blockers to clear before submitting
 
-- [ ] **Create the public repo and push.** `git remote -v` is empty. Nothing can
-      be submitted until this exists, and it is the only hard blocker left.
-- [ ] **Decide the repo identity.** This working copy contains *two* projects:
-      Bee Bridge (the submission) and Hermes Bridge (the Alexa+ entry). A judge
-      landing on a mixed root will not know which one to look at. Cleanest fix
-      is a dedicated repo containing the Bee half only, with `README.bee.md` as
-      the root README.
-- [ ] **Attach a demo video** if a live wearable is not available to judges.
+- [ ] **Create the public repo and push.** The dedicated repo is built and
+      committed at `bee-bridge/` on branch `main`. It needs a GitHub remote,
+      which needs your account. One command once it exists:
+      `cd bee-bridge && git remote add origin <url> && git push -u origin main`
+- [ ] **Attach a demo video** if judges will not have hardware. The
+      `npm run demo:attack` path is a screen recording away.
 - [ ] **Ask the two open questions** in §3 at live office hours — the hardware
       requirement is the one fact that changes what the demo can be.
+
+## 1a. Already done
+
+- Dedicated Bee-only repo staged, `npm install` verified from clean, typecheck
+  clean, 70 tests, 30 smoke checks, 6 auth checks, all exiting 0.
+- README written for judges, with the demo commands and an honest limits
+  section.
+- Friction log drafted (§4) — worth up to a 10% judging bonus.
+- `BEE_BRIDGE_TOKEN` implemented and tested, closing the no-auth gap the README
+  used to admit to.
+- A `bee-bridge/.gitignore` rule for synced Bee exports, so a user cannot
+  accidentally commit their own conversation data.
+
 
 ## 2. Demo script (three minutes)
 
