@@ -175,8 +175,30 @@ inside the model. You need both.
 | `BEE_BRIDGE_HOST` | `127.0.0.1` | Bind address. Keep it on loopback. |
 | `BEE_BIN` | `bee` | Path to the Bee CLI. |
 | `BEE_BRIDGE_TOKEN` | *(unset)* | If set, `/mcp` requires `Authorization: Bearer <token>`, compared in constant time. Unset means no auth — fine for a local demo, not for anything else. |
+| `SPRIG_BEE_STANDIN` | *(unset)* | Force stand-in disclosure on, for a stand-in invoked as `bee` on PATH. |
 | `BEE_RECALL_TIMEOUT_MS` | `20000` | Per-recall budget. |
 | `SPRIG_BEE_MAX_TRANSCRIPT_CHARS` | `8000` | Cap on a returned transcript. |
+
+## The server tells you where the data came from
+
+If the bridge is reading a stand-in or a fixture rather than the real `bee` CLI,
+it says so — loudly — on every surface a person or a judge could look:
+
+- `GET /health` → `dataSource: "stand-in"`, `standIn: true`, plus a `notice`
+- the `bee_status` tool → *"The stand-in is reachable… **WARNING: STAND-IN
+  MODE: this bridge is not reading Amazon Bee**"*
+- `bridge://bee/status` → the same fields as JSON
+
+This came out of an audit rather than a design sketch. The server previously
+returned `ok: true` and told you *"Bee is reachable"* while serving fabricated
+transcripts — technically true only if you did not know what `BEE_BIN` pointed
+at. A demo that quietly serves invented data is the one failure this project
+cannot afford, given that its whole argument is about being honest about where
+content comes from.
+
+It is triggered by `BEE_BIN` being anything other than `bee`, by
+`FAKE_BEE_SCENARIO` being set, or by `SPRIG_BEE_STANDIN=1`. Talking to a real
+`bee` adds no noise: `dataSource: "bee"`, no warning.
 
 ## What this does not protect you from
 

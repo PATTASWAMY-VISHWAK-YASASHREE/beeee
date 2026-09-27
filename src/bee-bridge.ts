@@ -8,6 +8,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { z } from 'zod';
 
 import { BEE_BIN, PROTOCOL_VERSION, READ_ONLY_TOOLS } from './bee/client.js';
+import { detectBeeMode } from './bee/mode.js';
 import { SANITIZE } from './bee/sanitize.js';
 import { closeBeeClient, registerBeeTools } from './bee/tools.js';
 
@@ -123,6 +124,18 @@ export function createServer(): McpServer {
               protocol: PROTOCOL_VERSION,
               transport: 'streamable-http',
               beeBinary: BEE_BIN,
+              // Never let a reader infer that fabricated content is real Bee.
+              ...(() => {
+                const mode = detectBeeMode(BEE_BIN);
+                return mode.standIn
+                  ? {
+                      dataSource: mode.source,
+                      standIn: true,
+                      notice: mode.notice,
+                      standInReason: mode.reason,
+                    }
+                  : { dataSource: mode.source, standIn: false };
+              })(),
               readOnlyTools: READ_ONLY_TOOLS,
               maxTranscriptChars: SANITIZE.maxTranscriptChars,
               note:
@@ -289,6 +302,10 @@ export function createApp(): express.Express {
   app.use(express.static(join(here, '..', 'public')));
 
   app.get('/health', (_req, res) => {
+    // A health check that returns `ok: true` while serving fabricated
+    // transcripts is worse than no health check, so the data source is stated
+    // here explicitly. See src/bee/mode.ts for why this exists.
+    const mode = detectBeeMode(BEE_BIN);
     res.json({
       ok: true,
       name: SERVER_NAME,
@@ -297,6 +314,9 @@ export function createApp(): express.Express {
       transport: 'streamable-http',
       beeBinary: BEE_BIN,
       readOnly: true,
+      dataSource: mode.source,
+      standIn: mode.standIn,
+      ...(mode.standIn ? { notice: mode.notice, standInReason: mode.reason } : {}),
     });
   });
 

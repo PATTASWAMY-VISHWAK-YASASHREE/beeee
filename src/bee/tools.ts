@@ -2,12 +2,14 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
 import {
+  BEE_BIN,
   BeeClient,
   BeeError,
   BeePolicyError,
   READ_ONLY_TOOLS,
   type BeeClientOptions,
 } from './client.js';
+import { detectBeeMode } from './mode.js';
 import { SANITIZE, sanitizeForPrompt, type SanitizeReport } from './sanitize.js';
 
 /**
@@ -290,19 +292,27 @@ export function registerBeeTools(
       inputSchema: {},
     },
     async () => {
+      const mode = detectBeeMode(BEE_BIN);
       try {
         const bee = await getClient(clientOptions);
         const tools = await bee.listTools({ timeoutMs: RECALL_TIMEOUT_MS });
         const allowed = tools.filter((t) => READ_ONLY_TOOLS.includes(t.name)).map((t) => t.name);
         const refused = tools.filter((t) => !READ_ONLY_TOOLS.includes(t.name)).map((t) => t.name);
-        return text(
-          [
-            `Bee is reachable over ${bee.describe()}.`,
-            `It offers ${tools.length} tools; this bridge may call ${allowed.length}.`,
-            `Refused as not read-only: ${refused.length ? refused.join(', ') : 'none'}.`,
-            'Content is redacted, fenced, and checked for injection before it is returned.',
-          ].join(' '),
-        );
+
+        // "Bee is reachable" is a false statement when the binary is a
+        // stand-in, which is exactly the sort of quiet untruth this project
+        // exists to avoid. Say what is actually true, and say so loudly.
+        const subject = mode.standIn ? 'The stand-in' : 'Bee';
+
+        const lines = [
+          `${subject} is reachable over ${bee.describe()}.`,
+          mode.standIn ? `WARNING: ${mode.notice}` : '',
+          `It offers ${tools.length} tools; this bridge may call ${allowed.length}.`,
+          `Refused as not read-only: ${refused.length ? refused.join(', ') : 'none'}.`,
+          'Content is redacted, fenced, and checked for injection before it is returned.',
+        ].filter(Boolean);
+
+        return text(lines.join(' '));
       } catch (error) {
         return text(`${describeFailure(error)} Nothing was read.`);
       }
