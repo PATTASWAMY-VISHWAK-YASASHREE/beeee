@@ -69,9 +69,42 @@ npm test                   # unit + integration tests
 npm run typecheck
 npm run smoke              # 30 end-to-end checks over real HTTP
 npm run smoke:auth         # 6 auth checks with BEE_BRIDGE_TOKEN set
+npm run verify:bee         # check this against a real Bee CLI
 ```
 
-### No hardware? The demo still runs.
+## Verification status — read this before trusting anything above
+
+The honest version, up front, because a reviewer is entitled to ask "does this
+actually work against Bee?"
+
+| What | Status |
+| --- | --- |
+| Transport, handshake, read-only enforcement, sanitisation, fencing, injection detection | **Verified.** 70 tests, 30 smoke checks, 6 auth checks — all green, all exit 0. |
+| Those tests run against a **protocol-accurate fixture**, not a wearable | **Verified.** Real `initialize` handshake, real stdio JSON-RPC, real tool-call shape. |
+| The **same pipeline against a real Bee CLI** | **Not yet run.** No wearable was available while this was built. |
+| Bee's own capture, encryption, account auth, Developer Mode gating | **Not ours to verify.** |
+
+So: the code is tested, and the thing it has **not** been tested against is
+Bee itself. Rather than leave that as a claim, there is a command for it:
+
+```bash
+npm i -g @beeai/cli
+bee login
+# enable Developer Mode in the Bee app: tap the version five times
+npm run verify:bee
+```
+
+It checks the CLI, authentication, the real tool surface, the read-only
+boundary, a real recall, and that sanitisation is applied — then names what it
+**cannot** verify even on a full pass. It has been run against the fixture, where
+it reports 7/7 PASS; against a real wearable it has not been run, and this repo
+does not pretend otherwise.
+
+If you have the hardware, running that one command converts the biggest
+assumption in this project into evidence. It is the single highest-value thing
+left to do.
+
+## No hardware? The demo still runs.
 
 There is no Bee simulator, and the real path needs the wearable. So this repo
 ships a **fake `bee` that speaks the real wire protocol** — a genuine

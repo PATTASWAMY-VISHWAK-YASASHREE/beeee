@@ -19,7 +19,8 @@
     "smoke:auth": "tsx scripts/smoke-auth.ts",
     "demo": "tsx scripts/demo.ts",
     "demo:attack": "tsx scripts/demo.ts injection",
-    "demo:secrets": "tsx scripts/demo.ts secrets"
+    "demo:secrets": "tsx scripts/demo.ts secrets",
+    "verify:bee": "tsx scripts/verify-bee.ts"
   },
   "keywords": [
     "mcp",
