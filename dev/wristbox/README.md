@@ -56,6 +56,63 @@ npm start
 
 Open <http://127.0.0.1:8791>, speak into your phone, and ask a question.
 
+## Microphone permissions, and why the phone is different
+
+Browsers only grant microphone access in a **secure context**. That is not a
+permission-prompt problem you can click through — it is checked before the
+prompt exists, which is why a phone over the LAN simply has a dead mic button.
+
+| Where you open the page | Secure? | Mic |
+| --- | --- | --- |
+| `http://localhost:8792` on the PC | **yes** — localhost is exempt | works |
+| `http://192.168.1.3:8792` on a phone | **no** | blocked before any prompt |
+| `https://192.168.1.3:8792` with a trusted cert | **yes** | works |
+
+The page checks `window.isSecureContext` at load and tells you which situation
+you are in, rather than failing silently.
+
+### Three ways to get a working mic
+
+1. **Use the PC at `http://localhost`.** Works right now, no setup. This is
+   the fastest route and it exercises exactly the same pipeline.
+2. **Type your turns on the phone.** The typing fallback is always available,
+   everything downstream is identical, and typing the attack line is arguably a
+   *better* demo because you control the exact text.
+3. **Serve HTTPS from a certificate the phone trusts:**
+
+   ```bash
+   # with mkcert
+   mkcert -install
+   mkcert -cert-file tmp-tls/cert.pem -key-file tmp-tls/key.pem 192.168.1.3 localhost
+   npm run wristbox:lan -- --tls-cert tmp-tls/cert.pem --tls-key tmp-tls/key.pem
+   ```
+
+   A `.pfx` works too, which is usually what Windows and `mkcert -install`
+   hand you:
+
+   ```bash
+   npm run wristbox:lan -- --tls-pfx bundle.pfx --tls-pfx-pass <password>
+   ```
+
+   Then install the mkcert CA **on the phone** (Settings → Security → Install
+   certificate, or AirDrop/email the `rootCA.pem` and install it).
+
+### The trap: a self-signed certificate is not enough
+
+An origin only counts as secure if the certificate chains to a CA the device
+*trusts*. With a self-signed cert, Chrome shows a warning and — even after you
+click through — `isSecureContext` stays `false`, so the mic stays blocked. This
+is not a bug and there is no flag for it.
+
+It is worth being sure, because the failure looks like a permissions bug. Node's
+`fetch`, which trusts nothing implicitly, rejects a self-signed cert outright;
+that is the same rule a browser applies to `getUserMedia`, in a stricter form.
+If you generate a self-signed cert and the mic is still dead, this is why.
+
+**A tunnel to a real hostname** (`cloudflared tunnel --url http://localhost:8792`)
+also works and skips the certificate installation, at the cost of an external
+dependency and a network round trip.
+
 ## Things to be honest about
 
 - **Browser speech recognition is not offline.** Chrome and Safari implement the

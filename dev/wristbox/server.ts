@@ -1,9 +1,12 @@
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import express, { type Request, type Response } from 'express';
+import { createServer as createHttpServer } from 'node:http';
+import { createServer as createHttpsServer } from 'node:https';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
@@ -244,12 +247,90 @@ export function createApp(): express.Express {
   return app;
 }
 
+/**
+ * Reads TLS material from `--tls-cert` / `--tls-key`, if given.
+ *
+ * Why this exists: browsers only grant microphone access in a *secure context*,
+ * and `http://192.168.1.3:8792` is not one. So on a phone the mic is blocked
+ * before any permission prompt appears, and the failure looks like a bug in
+ * this page rather than a browser rule. A certificate is the only way through.
+ *
+ * The catch worth knowing: a **self-signed** certificate is not enough. The
+ * origin is only "authenticated" if the certificate chains to a CA the device
+ * trusts, so Chrome still reports a non-secure context after you click through
+ * the warning. Use `mkcert` and install its CA on the phone, or tunnel to a
+ * real hostname. Plain `localhost` is exempt, which is why the desktop path
+ * works over http.
+ */
+function tlsOptionsFromArgs(argv: string[]): { cert: Buffer; key: Buffer } | null {
+  const certIndex = argv.indexOf('--tls-cert');
+  const keyIndex = argv.indexOf('--tls-key');
+  if (certIndex === -1 || keyIndex === -1) return null;
+  const certPath = argv[certIndex + 1];
+  const keyPath = argv[keyIndex + 1];
+  if (!certPath || !keyPath) {
+    process.stderr.write('wristbox: --tls-cert and --tls-key both need a file path.\n');
+    return null;
+  }
+  try {
+    return { cert: readFileSync(certPath), key: readFileSync(keyPath) };
+  } catch (error) {
+    process.stderr.write(
+      `wristbox: could not read TLS material: ${
+        error instanceof Error ? error.message : String(error)
+      }\n`,
+    );
+    return null;
+  }
+}
+
+/**
+ * Reads a PKCS#12 bundle from `--tls-pfx`, if given.
+ *
+ * Supported alongside the PEM pair because `.pfx` is what Windows certificate
+ * export and `mkcert -install` hand you by default, so it is the format most
+ * people actually have. Returns null when unused so the caller can tell "not
+ * configured" from "configured and broken".
+ */
+function pfxOptionsFromArgs(argv: string[]): { pfx: Buffer; passphrase?: string } | null {
+  const index = argv.indexOf('--tls-pfx');
+  if (index === -1) return null;
+  const pfxPath = argv[index + 1];
+  if (!pfxPath) {
+    process.stderr.write('wristbox: --tls-pfx needs a file path.\n');
+    return null;
+  }
+  const passIndex = argv.indexOf('--tls-pfx-pass');
+  const passphrase = passIndex === -1 ? undefined : argv[passIndex + 1];
+  try {
+    // ExactOptionalPropertyTypes is off, so an absent passphrase is fine here.
+    return { pfx: readFileSync(pfxPath), passphrase };
+  } catch (error) {
+    process.stderr.write(
+      `wristbox: could not read the pfx bundle: ${
+        error instanceof Error ? error.message : String(error)
+      }\n`,
+    );
+    return null;
+  }
+}
+
 export function start(): void {
   const lan = process.argv.includes('--lan');
   const host = lan ? '0.0.0.0' : HOST;
+  const tls = tlsOptionsFromArgs(process.argv) ?? pfxOptionsFromArgs(process.argv);
   const app = createApp();
-  const server = app.listen(PORT, host, () => {
-    const lanAddresses = lan ? localAddresses() : [];
+
+  // DNS-rebinding protection builds its allow-list from HOST:PORT, and the
+  // SDK only accepts host:port pairs, not a scheme, so nothing here changes
+  // when TLS is on.
+  const listener = tls
+    ? createHttpsServer(tls, app).listen(PORT, host)
+    : createHttpServer(app).listen(PORT, host);
+
+  listener.once('listening', () => {
+    const scheme = tls ? 'https' : 'http';
+    const lanAddresses = lan ? localAddresses(scheme) : [];
     process.stdout.write(
       [
         '',
@@ -259,8 +340,8 @@ export function start(): void {
         '  improvised speech in front of the sanitiser. It holds speech in',
         '  memory only and writes nothing to disk.',
         '',
-        `  capture page   http://localhost:${PORT}/`,
-        `  mcp endpoint   http://127.0.0.1:${PORT}/mcp`,
+        `  capture page   ${scheme}://localhost:${PORT}/`,
+        `  mcp endpoint   ${scheme}://127.0.0.1:${PORT}/mcp`,
         `  turns stored   ${store.count()}`,
         '',
         `  token          ${TOKEN}`,
@@ -281,12 +362,33 @@ export function start(): void {
               '            that on a network you trust.',
             ].join('\n'),
         '',
+        tls
+          ? [
+              '  TLS: on. Microphone access should be permitted by the browser,',
+              '  provided the certificate chains to a CA this device trusts.',
+            ].join('\n')
+          : [
+              '  Microphone on a PHONE: not available over plain http. Browsers only',
+              '  grant mic access in a secure context, and a LAN address is not one,',
+              '  so the button will be refused before any permission prompt appears.',
+              '  Three ways forward, easiest first:',
+              '    1. Use this page on the PC at http://localhost — localhost counts as',
+              '       secure, so the mic works right now.',
+              '    2. Type turns on the phone instead. Everything downstream is identical,',
+              '       and typing the attack line is arguably a better demo.',
+              '    3. For a phone mic, serve HTTPS with a certificate the phone trusts:',
+              '         npm run wristbox:lan -- --tls-cert <cert> --tls-key <key>',
+              '       Use mkcert and install its CA on the phone. A *self-signed* cert is',
+              '       NOT enough — the origin stays unauthenticated, so the mic stays',
+              '       blocked even after clicking through the warning.',
+          ].join('\n'),
+        '',
       ].join('\n'),
     );
   });
 
   const shutdown = () => {
-    server.close();
+    listener.close();
     process.exit(0);
   };
   process.on('SIGINT', shutdown);
@@ -299,14 +401,18 @@ export function start(): void {
  * Only used in --lan mode, and only to print a URL you can actually type on a
  * phone. Returning a stub would make LAN mode look broken, because the one
  * thing an operator needs from it is the address.
+ *
+ * The scheme is passed in rather than hardcoded: a "https://" that actually
+ * served plain http would be worse than no link at all, and the reverse would
+ * hand the phone a broken one.
  */
-function localAddresses(): string[] {
+function localAddresses(scheme: string): string[] {
   try {
     const nets = networkInterfaces();
     return Object.values(nets)
       .flatMap((entries) => entries ?? [])
       .filter((e) => e.family === 'IPv4' && !e.internal)
-      .map((e) => `http://${e.address}:${PORT}/`);
+      .map((e) => `${scheme}://${e.address}:${PORT}/`);
   } catch {
     return [];
   }

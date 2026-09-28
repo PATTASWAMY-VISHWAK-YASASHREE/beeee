@@ -881,13 +881,44 @@ details summary {
     return Boolean(SpeechRecognitionCtor);
   }
 
+  // Why the mic can be unavailable for two quite different reasons, which
+  // need different advice and are easy to confuse:
+  //
+  //   - no API at all (Firefox, old browsers)
+  //   - the API exists but the page is not a secure context, so the browser
+  //     refuses mic access before any permission prompt appears. This is the
+  //     one that bites on a phone: a LAN address like http://192.168.1.3:8792
+  //     is not secure, and localhost is exempt, which is why the same page
+  //     works on the desktop and not on the handset.
+  //
+  // Typing a turn works either way, so the page stays usable regardless and
+  // simply says which situation it is in.
+  function micBlockedByContext() {
+    return speechSupported() && window.isSecureContext === false;
+  }
+
   function setSpeechUnavailable() {
     els.unsupported.classList.remove('hidden');
     els.micBtn.disabled = true;
     els.stopBtn.disabled = true;
+
+    if (micBlockedByContext()) {
+      setStatus('error', 'needs https');
+      showInterim(
+        'This page is not a secure context, so the browser will not grant microphone ' +
+          'access — you will not see a permission prompt, because it is refused before ' +
+          'that. On a desktop, open the same page on http://localhost, which browsers ' +
+          'treat as secure. On a phone, either type your turns below, or serve Wristbox ' +
+          'over HTTPS with a certificate the phone trusts (mkcert).',
+        false
+      );
+      return;
+    }
+
     setStatus('error', 'no speech api');
     showInterim(
-      'This browser cannot do live speech. Type a turn instead — see the note at the top.',
+      'This browser cannot do live speech. Type a turn instead — everything downstream ' +
+        'is identical, and you can type the attack line exactly.',
       false
     );
   }
@@ -1166,7 +1197,9 @@ details summary {
     renderScripts();
     wire();
 
-    if (!speechSupported()) setSpeechUnavailable();
+    // Checked at boot, not only on first click, so the reason is on screen
+    // before anyone wonders why the mic is dead.
+    if (!speechSupported() || micBlockedByContext()) setSpeechUnavailable();
 
     setStatus('connecting', 'connecting…');
     refresh();

@@ -12,3 +12,9 @@ coverage/
 # rather than tidiness.
 bee-data/
 *.bee-sync.json
+
+# Local TLS material for Wristbox. Never commit a private key or a pfx: a
+# throwaway cert belongs in a temp directory, not in the repository.
+*.pfx
+*.pem
+tmp-tls/
