@@ -75,4 +75,32 @@ describe('detectBeeMode', () => {
       if (mode.standIn) expect(mode.notice.length).toBeGreaterThan(10);
     }
   });
+
+  it('believes a server that says it is a stand-in', () => {
+    // Found by running the bridge against Wristbox over the HTTP transport
+    // with BEE_BIN unset: it reported `dataSource: "bee"` and said "Bee is
+    // reachable" while reading stand-in content. The endpoint can point
+    // anywhere, so the handshake is the only reliable evidence.
+    const mode = detectBeeMode('bee', {}, 'wristbox');
+    expect(mode.standIn).toBe(true);
+    expect(mode.reason).toMatch(/wristbox/);
+    expect(mode.notice).toMatch(/not Amazon Bee/i);
+  });
+
+  it('trusts the handshake over a clean environment', () => {
+    // Self-identification wins even when every env signal looks fine.
+    expect(detectBeeMode('bee', {}, 'fake-bee').standIn).toBe(true);
+  });
+
+  it('does not invent a stand-in from an unfamiliar server name', () => {
+    // The real CLI's serverInfo name is unknown to us, so an unrecognised name
+    // is not evidence. Treating it as one would cry wolf against the real
+    // product, which trains people to ignore the warning.
+    expect(detectBeeMode('bee', {}, 'some-unexpected-name').standIn).toBe(false);
+  });
+
+  it('treats a null or absent server name as no information', () => {
+    expect(detectBeeMode('bee', {}, null).standIn).toBe(false);
+    expect(detectBeeMode('bee', {}).standIn).toBe(false);
+  });
 });

@@ -292,14 +292,19 @@ export function registerBeeTools(
       inputSchema: {},
     },
     async () => {
-      const mode = detectBeeMode(BEE_BIN);
+      // Env is only an assumption; what the server said about itself in the
+      // handshake is a fact, so mode detection is redone once connected.
+      // Without this, pointing BEE_MCP_HTTP_URL at a stand-in while BEE_BIN
+      // stayed unset reported "Bee is reachable" over stand-in data.
+      let mode = detectBeeMode(BEE_BIN);
       try {
         const bee = await getClient(clientOptions);
+        mode = detectBeeMode(BEE_BIN, process.env, bee.info?.name);
         const tools = await bee.listTools({ timeoutMs: RECALL_TIMEOUT_MS });
         const allowed = tools.filter((t) => READ_ONLY_TOOLS.includes(t.name)).map((t) => t.name);
         const refused = tools.filter((t) => !READ_ONLY_TOOLS.includes(t.name)).map((t) => t.name);
 
-        // "Bee is reachable" is a false statement when the binary is a
+        // "Bee is reachable" is a false statement when the server is a
         // stand-in, which is exactly the sort of quiet untruth this project
         // exists to avoid. Say what is actually true, and say so loudly.
         const subject = mode.standIn ? 'The stand-in' : 'Bee';
@@ -307,6 +312,7 @@ export function registerBeeTools(
         const lines = [
           `${subject} is reachable over ${bee.describe()}.`,
           mode.standIn ? `WARNING: ${mode.notice}` : '',
+          bee.info?.name ? `It introduced itself as "${bee.info.name}".` : '',
           `It offers ${tools.length} tools; this bridge may call ${allowed.length}.`,
           `Refused as not read-only: ${refused.length ? refused.join(', ') : 'none'}.`,
           'Content is redacted, fenced, and checked for injection before it is returned.',

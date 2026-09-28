@@ -703,6 +703,28 @@ details summary {
     }
   }
 
+  // ------------------------------------------------------------ url token --
+  //
+  // The server prints a ready-to-open URL with ?token=... in it, because the
+  // alternative is reading a 64-character hex string off a terminal and typing
+  // it into a phone with two thumbs. The query string wins over the stored
+  // value so a freshly restarted server does not silently keep using a stale
+  // token and fail with a confusing 401.
+  //
+  // A token in a URL is a real trade-off and worth naming: it can end up in
+  // browser history and in any server access log along the path. It is a
+  // short-lived token for a local dev stand-in on a trusted network, which is
+  // why this is acceptable here and would not be in production.
+
+  function tokenFromUrl() {
+    try {
+      var params = new URLSearchParams(window.location.search);
+      return params.get('token') || '';
+    } catch (err) {
+      return '';
+    }
+  }
+
   // ------------------------------------------------------------------- ui --
 
   function setStatus(name, text) {
@@ -1131,7 +1153,12 @@ details summary {
   // ----------------------------------------------------------------- boot --
 
   function boot() {
-    state.token = load(TOKEN_KEY, '');
+    // A token in the URL wins over a remembered one, so opening the link the
+    // server printed just works, and a restarted server does not leave the
+    // phone quietly holding a stale token.
+    var fromUrl = tokenFromUrl();
+    state.token = fromUrl || load(TOKEN_KEY, '');
+    if (state.token) save(TOKEN_KEY, state.token);
     state.speaker = load(SPEAKER_KEY, 'Speaker 1') === 'Speaker 2' ? 'Speaker 2' : 'Speaker 1';
     els.token.value = state.token;
 

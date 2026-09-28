@@ -265,15 +265,21 @@ export function start(): void {
         '',
         `  token          ${TOKEN}`,
         '',
-        '  Point Bee Bridge at it:',
-        '    BEE_MCP_TRANSPORT=http',
-        `    BEE_MCP_HTTP_URL=http://127.0.0.1:${PORT}/mcp`,
-        `    BEE_MCP_HTTP_TOKEN=${TOKEN}`,
-        '',
         lan
-          ? `  LAN MODE: reachable from ${lanAddresses.join(', ') || 'other devices on this network'}.`
-          : '  LAN MODE: off. Pass --lan to let a phone reach it, which exposes /ingest',
-        '            to your network. Only do that on a network you trust.',
+          ? [
+              '  Open this on your phone, token already included:',
+              '',
+              ...lanAddresses.map((url) => `    ${url}?token=${TOKEN}`),
+              '',
+              '  A token in a URL is a deliberate trade-off: it can land in browser',
+              '  history. It is short-lived, for a local stand-in on a trusted network,',
+              '  so that is acceptable here and would not be in production.',
+            ].join('\n')
+          : [
+              '  LAN MODE: off. Run `npm run wristbox:lan` to let a phone reach it,',
+              '            which exposes the ingest endpoint to your network. Only do',
+              '            that on a network you trust.',
+            ].join('\n'),
         '',
       ].join('\n'),
     );

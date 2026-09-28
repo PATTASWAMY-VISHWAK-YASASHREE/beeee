@@ -196,9 +196,17 @@ at. A demo that quietly serves invented data is the one failure this project
 cannot afford, given that its whole argument is about being honest about where
 content comes from.
 
-It is triggered by `BEE_BIN` being anything other than `bee`, by
-`FAKE_BEE_SCENARIO` being set, or by `SPRIG_BEE_STANDIN=1`. Talking to a real
-`bee` adds no noise: `dataSource: "bee"`, no warning.
+It is triggered by the MCP server introducing itself as a stand-in, by
+`BEE_BIN` being anything other than `bee`, by `FAKE_BEE_SCENARIO` being set, or
+by `SPRIG_BEE_STANDIN=1`. Talking to a real `bee` adds no noise:
+`dataSource: "bee"`, no warning.
+
+**The handshake is trusted over the environment**, because the endpoint can
+point anywhere. An earlier version only inspected `BEE_BIN`, and pointing
+`BEE_MCP_HTTP_URL` at a stand-in while `BEE_BIN` was unset produced
+`dataSource: "bee"` and the line *"Bee is reachable"* over stand-in content.
+A server introducing itself is a fact; an environment variable is an
+assumption.
 
 ## What this does not protect you from
 

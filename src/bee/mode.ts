@@ -28,9 +28,20 @@ export interface BeeMode {
 export function detectBeeMode(
   binary: string,
   env: NodeJS.ProcessEnv = process.env,
+  /**
+   * The name the server reported in its MCP handshake, if we have one.
+   *
+   * This is the most direct evidence available and it is checked first,
+   * because env alone is not enough. With the HTTP transport the endpoint can
+   * point at *anything*: pointing it at a stand-in while `BEE_BIN` stayed
+   * unset made this report `dataSource: "bee"` while reading fabricated data,
+   * which is precisely the lie this module exists to prevent. A server
+   * introducing itself is a fact; an environment variable is an assumption.
+   */
+  serverName?: string | null,
 ): BeeMode {
   // An explicit override wins, so an operator can flag a stand-in that happens
-  // to be invoked as `bee` on PATH.
+  // to be introduced as the real thing.
   const forced = env.SPRIG_BEE_STANDIN?.trim().toLowerCase();
   if (forced === '1' || forced === 'true' || forced === 'yes') {
     return {
@@ -40,6 +51,22 @@ export function detectBeeMode(
       notice:
         'STAND-IN MODE: this bridge is not reading Amazon Bee. It is reading fabricated or ' +
         'stand-in content. Do not present this data as a Bee integration.',
+    };
+  }
+
+  // Self-identification beats every other signal. A server that calls itself
+  // Wristbox is telling us what it is, and second-guessing that would be worse
+  // than believing it.
+  const name = (serverName ?? '').trim();
+  if (/wristbox|stand-?in|fixture|fake/i.test(name)) {
+    return {
+      standIn: true,
+      source: 'stand-in',
+      reason: `the server introduced itself as "${name}"`,
+      notice:
+        `STAND-IN MODE: the MCP server identified itself as "${name}", not Amazon Bee. ` +
+        'This bridge is reading stand-in content. Do not present this data as a real Bee ' +
+        'integration.',
     };
   }
 
