@@ -12,49 +12,48 @@
  */
 
 import { fileURLToPath } from 'node:url';
-import { createServer } from 'node:net';
+import type { Server } from 'node:http';
 
+/**
+ * 48 characters, comfortably over the 32 the server now enforces at startup.
+ * It has to be: the server refuses to bind with a shorter one, so a token that
+ * used to "work" now stops the process from starting at all. That is the
+ * intended behaviour, and this constant is the evidence of it.
+ */
 const TOKEN = 'test-token-abcdefghijklmnopqrstuvwxyz-0123456789';
 process.env.BEE_BRIDGE_TOKEN = TOKEN;
 process.env.BEE_BIN = process.execPath;
 process.chdir(fileURLToPath(new URL('../tests/fixtures/', import.meta.url)));
 process.env.FAKE_BEE_SCENARIO = 'normal';
 
-const PORT = await new Promise<number>((resolve, reject) => {
-  const probe = createServer();
-  probe.once('error', reject);
-  probe.listen(0, '127.0.0.1', () => {
-    const address = probe.address();
-    const port = typeof address === 'object' && address ? address.port : 0;
-    probe.close(() => resolve(port));
-  });
-});
+const { freePort, listen, close, timedFetch, discard, Checks } = await import(
+  './smoke-harness.js'
+);
+
+const PORT = await freePort();
 process.env.BEE_BRIDGE_PORT = String(PORT);
 
-const { createApp } = await import('../src/bee-bridge.js');
+const { createApp, setBoundPort } = await import('../src/bee-bridge.js');
 
-let passed = 0;
-let failed = 0;
-function check(name: string, ok: boolean, detail = ''): void {
-  if (ok) {
-    passed += 1;
-    process.stdout.write(`  ok    ${name}\n`);
-  } else {
-    failed += 1;
-    process.stdout.write(`  FAIL  ${name}${detail ? ` -- ${detail}` : ''}\n`);
-  }
-}
+const checks = new Checks('Bee Bridge auth smoke test (token set)');
 
-const server = createApp().listen(PORT, '127.0.0.1');
-await new Promise((r) => server.once('listening', r));
-const base = `http://127.0.0.1:${PORT}`;
+/** A credential that is well formed and simply not the right one. */
+const WRONG_TOKEN = 'wrong-token-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
-process.stdout.write(`\nBee Bridge auth smoke test (token set)\n\n`);
+/** The server, torn down in `finally` whatever happens below. */
+let server: Server | null = null;
+let exitCode = 1;
+let base = '';
 
 const post = (headers: Record<string, string>, method = 'tools/list') =>
-  fetch(`${base}/mcp`, {
+  timedFetch(`${base}/mcp`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', ...headers },
+    headers: {
+      'content-type': 'application/json',
+      accept: 'application/json, text/event-stream',
+      'mcp-protocol-version': '2025-11-25',
+      ...headers,
+    },
     body: JSON.stringify({
       jsonrpc: '2.0',
       id: 1,
@@ -71,30 +70,108 @@ const post = (headers: Record<string, string>, method = 'tools/list') =>
     }),
   });
 
-check('no token is refused', (await post({})).status === 401);
-check('a wrong token is refused', (await post({}, 'initialize')).status === 401);
-check('a non-bearer authorization header is refused', (await post({ authorization: TOKEN })).status === 401);
+try {
+  // `listen` rejects on a bind failure and times out rather than waiting for a
+  // 'listening' event that will never arrive. See smoke-harness for why.
+  server = await listen(createApp(), PORT);
+  setBoundPort(PORT);
+  base = `http://127.0.0.1:${PORT}`;
 
-// The accepting call has to be a real handshake. Sending `tools/list` on a
-// brand-new session gets past auth and then fails with "Server not
-// initialized" -- which would look like a broken token check rather than the
-// protocol detail it actually is.
-const accepted = await post({ authorization: `Bearer ${TOKEN}` }, 'initialize');
-check('the correct token is accepted', accepted.status === 200, `got ${accepted.status}`);
-check('the accepted call returns a session id', Boolean(accepted.headers.get('mcp-session-id')));
+  process.stdout.write(`Target: ${base}\n\n`);
 
-// The demo must stay reachable, or a judge cannot see any of this.
-check('health stays open', (await fetch(`${base}/health`)).status === 200);
+  // Each of these consumes its response. An unread body keeps the socket open,
+  // which is what made the old teardown wait and needed a 150ms sleep to paper
+  // over it.
 
-process.stdout.write(`\n${passed} passed, ${failed} failed\n\n`);
+  const anonymous = await post({});
+  await discard(anonymous);
+  checks.check('no token is refused', anonymous.status === 401, `got ${anonymous.status}`);
+  // This check used to send NO authorization header at all, which made it
+  // byte-for-byte identical to the "no token" check above. It never exercised a
+  // present-but-wrong credential, so a regression that accepted any well-formed
+  // Bearer value would have passed both. The distinction between "you sent
+  // nothing" and "you sent the wrong thing" is the entire point of a constant-
+  // time comparison, so the test has to make it.
+  const wrong = await post({ authorization: `Bearer ${WRONG_TOKEN}` }, 'initialize');
+  await discard(wrong);
+  checks.check(
+    'a present-but-wrong token is refused',
+    wrong.status === 401,
+    `got ${wrong.status}`,
+  );
 
-// Close gracefully, then exit.
-//
-// The immediate `process.exit()` this used to do raced the listener teardown
-// and tripped a libuv assertion on Windows, which made a fully passing run
-// exit non-zero -- exactly the sort of thing that reads as "the tests fail"
-// when they do not. Draining the server and giving the handles a beat to
-// finish is slower and correct.
-server.close(() => {
-  setTimeout(() => process.exit(failed === 0 ? 0 : 1), 150);
-});
+  // And the near-miss: a token of the right *length* but the wrong bytes. A
+  // length-only comparison -- the classic bug when `timingSafeEqual` throws on
+  // mismatched buffer lengths and someone "fixes" it by checking length alone --
+  // would let this through.
+  const sameLength = await post(
+    { authorization: `Bearer ${'x'.repeat(TOKEN.length)}` },
+    'initialize',
+  );
+  await discard(sameLength);
+  checks.check(
+    'a wrong token of the correct length is refused',
+    sameLength.status === 401,
+    `got ${sameLength.status}`,
+  );
+
+  const malformed = await post({ authorization: TOKEN });
+  await discard(malformed);
+  checks.check(
+    'a non-bearer authorization header is refused',
+    malformed.status === 401,
+    `got ${malformed.status}`,
+  );
+
+  // The demo must stay reachable, or a judge cannot see any of this.
+  const health = await timedFetch(`${base}/health`);
+  await discard(health);
+  checks.check('health stays open', health.status === 200, `got ${health.status}`);
+
+  // The accepting call has to be a real handshake. Sending `tools/list` on a
+  // brand-new session gets past auth and then fails with "Server not
+  // initialized" -- which would look like a broken token check rather than the
+  // protocol detail it actually is.
+  //
+  // The body is parsed and asserted, not just the status. Status and a session
+  // header were the whole of the old check, and both are satisfied by a 200
+  // carrying a JSON-RPC `error` member, or by an initialize result with no
+  // protocolVersion -- neither of which is a working server. "Authenticated" and
+  // "the handshake succeeded" are separate claims, and only the first one is
+  // about the token.
+  const accepted = await post({ authorization: `Bearer ${TOKEN}` }, 'initialize');
+  const acceptedBody = (await accepted.json().catch(() => null)) as {
+    result?: { protocolVersion?: unknown };
+    error?: { message?: string };
+  } | null;
+  await discard(accepted);
+
+  checks.check('the correct token is accepted', accepted.status === 200, `got ${accepted.status}`);
+  checks.check(
+    'the accepted call returns a session id',
+    Boolean(accepted.headers.get('mcp-session-id')),
+  );
+  checks.check(
+    'the accepted call returns no JSON-RPC error',
+    acceptedBody !== null && acceptedBody.error === undefined,
+    acceptedBody?.error?.message ?? 'body was not JSON',
+  );
+  checks.check(
+    'the handshake reports a protocol version',
+    typeof acceptedBody?.result?.protocolVersion === 'string',
+    `protocolVersion was ${String(acceptedBody?.result?.protocolVersion)}`,
+  );
+
+  exitCode = checks.finish();
+} catch (error) {
+  process.stderr.write(`\n  ERROR ${String(error)}\n`);
+  if (error instanceof Error && error.stack) process.stderr.write(`${error.stack}\n`);
+  checks.check('the auth smoke run completed without throwing', false, String(error));
+  exitCode = 1;
+} finally {
+  // try/finally: any throw used to skip server.close() entirely, and the `bee`
+  // child this script spawns would be left running with nothing holding it.
+  if (server) await close(server).catch(() => undefined);
+}
+
+process.exit(exitCode);

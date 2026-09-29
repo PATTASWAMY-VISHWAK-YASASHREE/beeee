@@ -95,20 +95,46 @@ export const KNOWN_WRITE_TOOLS: readonly string[] = Object.freeze([
   'bee_manage_todos',
 ]);
 
+/**
+ * Reads a positive integer out of the environment, falling back on nonsense.
+ *
+ * Why not a bare `Number(...)`: every limit in this file is enforced with a `>`
+ * comparison, and `x > NaN` is always false. So one typo -- `BEE_MAX_ARG_CHARS=8000_`,
+ * or `=abc`, or an empty string -- does not fail loudly, it silently *removes*
+ * the cap and lets unbounded wearable content reach a model context. That is the
+ * exact failure this file exists to prevent, arrived at by accident instead of by
+ * a hostile server, which makes it worse: nobody is watching for it. Falling back
+ * to the default keeps the guard armed, which is the only safe direction.
+ */
+function envPositiveInt(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === '') return fallback;
+  const value = Number(raw.trim());
+  if (!Number.isFinite(value) || value <= 0) return fallback;
+  return Math.floor(value);
+}
+
 /** Voice cannot usefully absorb a megabyte of transcript, so replies are capped. */
-export const MAX_RESPONSE_CHARS = Number(process.env.BEE_MAX_RESPONSE_CHARS ?? 20_000);
+export const MAX_RESPONSE_CHARS = envPositiveInt('BEE_MAX_RESPONSE_CHARS', 20_000);
 
 /** Args for one tool call are small by nature; cap them so nothing odd ships out. */
-export const MAX_ARG_CHARS = Number(process.env.BEE_MAX_ARG_CHARS ?? 8_000);
+export const MAX_ARG_CHARS = envPositiveInt('BEE_MAX_ARG_CHARS', 8_000);
 
-const DEFAULT_TIMEOUT_MS = Number(process.env.BEE_TIMEOUT_MS ?? 20_000);
+const DEFAULT_TIMEOUT_MS = envPositiveInt('BEE_TIMEOUT_MS', 20_000);
 
 /**
  * Default port for `bee mcp serve-http`. Deliberately *not* this project's own
  * `PORT` (8790): if a developer forgets to set anything, we must not end up
  * talking to ourselves.
  */
-const DEFAULT_HTTP_PORT = Number(process.env.BEE_MCP_HTTP_PORT ?? 8788);
+const DEFAULT_HTTP_PORT = envPositiveInt('BEE_MCP_HTTP_PORT', 8788);
+
+/**
+ * Budget for the best-effort session teardown in `HttpTransport.close()`.
+ * Short on purpose: it runs in a `finally` on the way to exiting, and a hung
+ * server must not be able to hang shutdown.
+ */
+const CLOSE_TIMEOUT_MS = 5_000;
 
 /** `bee serve-http` refuses bearer tokens shorter than this. We refuse too. */
 export const MIN_HTTP_TOKEN_CHARS = 32;
@@ -300,6 +326,21 @@ function coerceBlock(value: unknown): BeeContentBlock | null {
   return block;
 }
 
+/**
+ * Turns a JSON-RPC `error` member into the one exception callers ever see.
+ *
+ * Both transports speak the same protocol and must agree on what a server-side
+ * refusal looks like; the mapping used to be written out twice, which is exactly
+ * how a transport ends up inventing its own error codes. Keeping it in one place
+ * means stdio and HTTP cannot drift apart in how they describe a failure.
+ */
+function toRpcError(error: NonNullable<JsonRpcResponse['error']>): BeeRpcError {
+  // An error object with no numeric code is malformed; -32603 (internal error)
+  // is the honest thing to report rather than surfacing `undefined` as a code.
+  const code = typeof error.code === 'number' ? error.code : -32603;
+  return new BeeRpcError(error.message ?? 'Bee returned an error.', code, error.data);
+}
+
 /** Normalises a JSON-RPC id from the wire into our string key. */
 function idKey(id: unknown): string | null {
   if (typeof id === 'string') return id;
@@ -381,6 +422,25 @@ class StdioTransport implements BeeTransport {
     this.child.stderr.setEncoding('utf8');
     this.child.stdout.on('data', (chunk: string) => this.ingest(chunk));
     this.child.stderr.on('data', (chunk: string) => this.note(String(chunk)));
+
+    // Writing to a pipe whose reader has gone away does not throw at the call
+    // site: `stdin.write` succeeds into the OS buffer and the failure arrives
+    // asynchronously as EPIPE / ERR_STREAM_DESTROYED on the stream's `error`
+    // event. With no listener Node escalates that to an uncaughtException, which
+    // kills the whole MCP server process -- turning a recoverable hiccup ("the
+    // CLI exited between our write and its read") into the bridge dying mid
+    // session. Routing it into `fail()` makes it an ordinary transport loss:
+    // pending callers are rejected with a typed BeeError, and the teardown that
+    // would have happened anyway happens deliberately instead of as a crash.
+    this.child.stdin.on('error', (error: NodeJS.ErrnoException) => {
+      this.fail(
+        new BeeTransportError(
+          `The pipe to bee mcp serve broke (${error.code ?? error.message}).${this.log ? ` Last output: ${this.log}` : ''}`,
+          'transport_lost',
+        ),
+      );
+    });
+
     this.child.on('error', (error: NodeJS.ErrnoException) => {
       this.fail(
         error.code === 'ENOENT'
@@ -533,8 +593,7 @@ class StdioTransport implements BeeTransport {
     clearTimeout(waiter.timer);
 
     if (message.error) {
-      const code = typeof message.error.code === 'number' ? message.error.code : -32603;
-      waiter.reject(new BeeRpcError(message.error.message ?? 'Bee returned an error.', code, message.error.data));
+      waiter.reject(toRpcError(message.error));
       return;
     }
     waiter.resolve(message.result);
@@ -628,13 +687,27 @@ function parseRpcBody(body: string, contentType: string, wantId: RpcId | null): 
   const isEventStream = contentType.toLowerCase().includes('text/event-stream');
 
   if (!isEventStream) {
+    let parsed: unknown;
     try {
-      const parsed: unknown = JSON.parse(body);
-      if (isRecord(parsed)) return parsed as JsonRpcResponse;
-      throw new Error('not an object');
+      parsed = JSON.parse(body);
     } catch {
       throw new BeeTransportError('Bee returned a body that is not a JSON-RPC object.', 'malformed_response');
     }
+    if (!isRecord(parsed)) {
+      throw new BeeTransportError('Bee returned a body that is not a JSON-RPC object.', 'malformed_response');
+    }
+    // A plain JSON body is no more trustworthy than an event stream about *whose*
+    // answer it is. Without this check a server-initiated notification, or a late
+    // reply to an earlier request, is accepted as the answer to the call in
+    // flight; the caller then sees `undefined` and reports "Bee returned no
+    // result", which is a completely different bug from the real one.
+    if (wantId !== null && idKey(parsed.id) !== wantId) {
+      throw new BeeTransportError(
+        "Bee's JSON body answered a different request than the one we sent.",
+        'malformed_response',
+      );
+    }
+    return parsed as JsonRpcResponse;
   }
 
   // Split on the SSE record separator. `\r\n\r\n` and `\n\n` both occur in the
@@ -702,10 +775,7 @@ class HttpTransport implements BeeTransport {
   async request(method: string, params: unknown, timeoutMs: number): Promise<unknown> {
     const id = `h${++this.nextId}`;
     const message = await this.post({ jsonrpc: '2.0', id, method, params }, timeoutMs, id);
-    if (message.error) {
-      const code = typeof message.error.code === 'number' ? message.error.code : -32603;
-      throw new BeeRpcError(message.error.message ?? 'Bee returned an error.', code, message.error.data);
-    }
+    if (message.error) throw toRpcError(message.error);
     return message.result;
   }
 
@@ -735,61 +805,77 @@ class HttpTransport implements BeeTransport {
     // An explicit AbortController is the honest way to bound a fetch: it cancels
     // the underlying socket, not just the promise, so a slow server cannot leave
     // a request dangling after we have given up on it.
+    //
+    // The timer is armed across the *whole* request, headers and body alike, and
+    // is only cleared in the `finally` at the bottom. Clearing it when `fetch`
+    // resolves would be a false sense of safety: `fetch` resolves on response
+    // *headers*, so a server that sends them promptly and then stalls or trickles
+    // the body would keep this call -- and the `await` above it -- alive forever,
+    // silently defeating the "hard per-request timeout" this class promises. The
+    // same signal is handed to `readBounded` below so the abort actually reaches
+    // the stream read, not just the connection setup.
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-    let response: Response;
     try {
-      response = await this.fetchImpl(this.url, {
-        method: 'POST',
-        headers: this.headers(),
-        body: JSON.stringify(payload),
-        signal: controller.signal,
-        cache: 'no-store',
-      });
-    } catch (error) {
-      const aborted = controller.signal.aborted;
-      throw new BeeTransportError(
-        aborted
-          ? `Bee did not answer within ${timeoutMs}ms.`
-          : `Could not reach Bee at ${this.describe()}: ${(error as Error).message}`,
-        aborted ? 'timeout' : 'http_status',
-      );
+      let response: Response;
+      try {
+        response = await this.fetchImpl(this.url, {
+          method: 'POST',
+          headers: this.headers(),
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+          cache: 'no-store',
+        });
+      } catch (error) {
+        // Only our own abort means "too slow". Anything else is a genuine
+        // connectivity or TLS failure and must keep its own diagnosis.
+        if (controller.signal.aborted) {
+          throw new BeeTransportError(`Bee did not answer within ${timeoutMs}ms.`, 'timeout');
+        }
+        throw new BeeTransportError(
+          `Could not reach Bee at ${this.describe()}: ${(error as Error).message}`,
+          'http_status',
+        );
+      }
+
+      this.captureSession(response);
+
+      if (response.status === 401 || response.status === 403) {
+        throw new BeeTransportError(
+          'Bee rejected our bearer token. Check that BEE_MCP_HTTP_TOKEN matches the one you started `bee mcp serve-http` with.',
+          'http_unauthorized',
+        );
+      }
+      if (response.status === 404 && this.sessionId) {
+        throw new BeeTransportError(
+          'Bee no longer knows this session. Restart `bee mcp serve-http` and create a new client.',
+          'session_expired',
+        );
+      }
+      if (!response.ok) {
+        throw new BeeTransportError(
+          `Bee answered HTTP ${response.status} ${response.statusText} for ${String(payload['method'])}.`,
+          'http_status',
+        );
+      }
+
+      // Notifications, and some rejections, carry no body at all.
+      const body = await this.readBounded(response, controller.signal, timeoutMs);
+      if (!body.trim()) {
+        if (wantId === null) return {};
+        throw new BeeTransportError(
+          `Bee answered ${String(payload['method'])} with an empty body.`,
+          'malformed_response',
+        );
+      }
+      return parseRpcBody(body, response.headers.get('content-type') ?? '', wantId);
     } finally {
+      // Only now is the request genuinely finished, so only now is it safe to
+      // disarm the deadline. Leaking this timer would keep the event loop alive
+      // for up to `timeoutMs` after a fast call.
       clearTimeout(timer);
     }
-
-    this.captureSession(response);
-
-    if (response.status === 401 || response.status === 403) {
-      throw new BeeTransportError(
-        'Bee rejected our bearer token. Check that BEE_MCP_HTTP_TOKEN matches the one you started `bee mcp serve-http` with.',
-        'http_unauthorized',
-      );
-    }
-    if (response.status === 404 && this.sessionId) {
-      throw new BeeTransportError(
-        'Bee no longer knows this session. Restart `bee mcp serve-http` and create a new client.',
-        'session_expired',
-      );
-    }
-    if (!response.ok) {
-      throw new BeeTransportError(
-        `Bee answered HTTP ${response.status} ${response.statusText} for ${String(payload['method'])}.`,
-        'http_status',
-      );
-    }
-
-    // Notifications, and some rejections, carry no body at all.
-    const body = await this.readBounded(response);
-    if (!body.trim()) {
-      if (wantId === null) return {};
-      throw new BeeTransportError(
-        `Bee answered ${String(payload['method'])} with an empty body.`,
-        'malformed_response',
-      );
-    }
-    return parseRpcBody(body, response.headers.get('content-type') ?? '', wantId);
   }
 
   private headers(): Record<string, string> {
@@ -812,13 +898,24 @@ class HttpTransport implements BeeTransport {
   }
 
   /**
-   * Reads a response body with a hard ceiling.
+   * Reads a response body with a hard ceiling *and* a deadline.
    *
    * `response.text()` will happily buffer whatever it is handed. Even over
    * loopback that is a denial-of-service waiting to happen, so we stream and
    * abort rather than trusting a `content-length` header.
+   *
+   * The `signal` matters as much as the size cap. Without it this loop is a
+   * `for(;;)` around an `await` on a stream the peer controls the pace of, and a
+   * server that sends headers then one byte per minute holds the call open
+   * indefinitely -- the size cap never trips because the size never arrives. So
+   * the same AbortSignal the fetch was given is checked on every iteration, and
+   * a timeout is reported as a timeout rather than as a generic read failure.
    */
-  private async readBounded(response: Response): Promise<string> {
+  private async readBounded(
+    response: Response,
+    signal: AbortSignal,
+    timeoutMs: number,
+  ): Promise<string> {
     const body = response.body;
     if (!body) return '';
 
@@ -827,6 +924,15 @@ class HttpTransport implements BeeTransport {
     let out = '';
     try {
       for (;;) {
+        if (signal.aborted) {
+          // The abort will also error the pending read; releasing first keeps us
+          // from leaving a dangling reader on a stream nobody will finish.
+          await reader.cancel().catch(() => undefined);
+          throw new BeeTransportError(
+            `Bee stopped sending after ${timeoutMs}ms; the response was incomplete.`,
+            'timeout',
+          );
+        }
         const { done, value } = await reader.read();
         if (done) break;
         out += decoder.decode(value, { stream: true });
@@ -839,6 +945,14 @@ class HttpTransport implements BeeTransport {
         }
       }
       return out + decoder.decode();
+    } catch (error) {
+      // A body read torn down by our own abort is a timeout. Reporting it as
+      // "malformed response" would send the operator hunting for a protocol bug
+      // that does not exist.
+      if (signal.aborted) {
+        throw new BeeTransportError(`Bee did not finish its reply within ${timeoutMs}ms.`, 'timeout');
+      }
+      throw error;
     } finally {
       reader.releaseLock();
     }
