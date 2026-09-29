@@ -6,7 +6,7 @@
   "license": "MIT",
   "type": "module",
   "engines": {
-    "node": ">=20.11"
+    "node": ">=22.12.0"
   },
   "main": "dist/bee-index.js",
   "types": "dist/bee-index.d.ts",
@@ -51,7 +51,7 @@
   },
   "devDependencies": {
     "@types/express": "^5.0.0",
-    "@types/node": "^20.11.0",
+    "@types/node": "^22.10.2",
     "tsx": "^4.23.15",
     "typescript": "^5.9.3",
     "vite": "^7.3.6",
