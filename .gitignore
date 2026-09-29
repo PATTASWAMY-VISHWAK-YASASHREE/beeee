@@ -20,10 +20,13 @@ coverage/
 # `git add -A` would commit runtime output.
 .test-state-*/
 
-# Scratch file used to pass a multi-line commit message to `git commit -F`.
-# It kept being swept in by `git add -A` because it existed at the moment of
-# staging, so it is ignored explicitly rather than left to chance.
+# Scratch files I use to pass a multi-line message to `git commit -F`. Both got
+# committed once, because `git add -A` ran while the file existed from the step I
+# was in. They are ignored explicitly rather than left to chance -- though the
+# real fix is to write the message outside the working tree.
 cm.txt
+msg.tmp
+*.tmp
 
 # A synced Bee export is the user's own conversation data. It must never be
 # committed, and this is the one .gitignore rule here that matters for safety
