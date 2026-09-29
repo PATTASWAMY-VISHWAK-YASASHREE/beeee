@@ -747,13 +747,60 @@ $('refreshBtn').addEventListener('click', () => {
   void Promise.all([refreshCatalogue(), refreshBoundary()]);
 });
 
+/**
+ * Rejects any base URL that is not a loopback origin.
+ *
+ * This is defence in depth, and the reasoning matters. The server-side
+ * guarantee is real: it binds 127.0.0.1 and enables DNS-rebinding protection
+ * with an explicit host allow-list. But this page is what *sends* the
+ * transcript flow - the recall request, the returned wearable content, and the
+ * MCP session id - to whatever host is in this box. A field that can be pointed
+ * anywhere means a typo or a pasted string silently ships that flow to someone
+ * else, and the server's loopback binding would not help because we would no
+ * longer be talking to the server.
+ *
+ * A `pattern` attribute would be the wrong fix: it is a hint for native
+ * validation, not an enforcement point, and it is skipped entirely for
+ * programmatically-set values. This is checked in JS at the point of use.
+ */
+function parseLoopbackBase(raw) {
+  const trimmed = String(raw || '').trim().replace(/\/+$/, '');
+  if (!trimmed) return { ok: false, reason: 'Enter an address.' };
+  let url;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    return { ok: false, reason: 'That is not a valid URL.' };
+  }
+  // http is the local case; https would be a tunnel, which is legitimate but
+  // not something this demo expects, so allow it rather than surprise anyone.
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    return { ok: false, reason: 'Use an http or https address.' };
+  }
+  const host = url.hostname.replace(/^\[|\]$/g, '');
+  const loopback =
+    host === 'localhost' ||
+    host === '::1' ||
+    /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
+  if (!loopback) {
+    return {
+      ok: false,
+      reason: 'Only loopback addresses are allowed. This page is a local demo and must not send your wearable data to a remote host.',
+    };
+  }
+  return { ok: true, value: trimmed };
+}
+
 $('baseForm').addEventListener('submit', (event) => {
   event.preventDefault();
-  const chosen = $('baseUrl').value.trim().replace(/\/+$/, '');
-  if (!chosen) return;
-  base = chosen;
+  const parsed = parseLoopbackBase($('baseUrl').value);
+  if (!parsed.ok) {
+    setStatus('error', parsed.reason);
+    return;
+  }
+  base = parsed.value;
   try {
-    localStorage.setItem(BASE_KEY, chosen);
+    localStorage.setItem(BASE_KEY, base);
   } catch {
     // A browser with storage disabled is not a reason to stop the demo.
   }

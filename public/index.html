@@ -127,8 +127,9 @@
         <h2 class="spaced">Why this is safe</h2>
         <ul class="reasons">
           <li>
-            <strong>Third-party speech is not instruction.</strong> Every byte from the wearable is
-            wrapped in a nonce fence before it leaves the server.
+            <strong>Third-party speech is not instruction.</strong> Recalled text is wrapped in a
+            nonce fence before it leaves the server, and a delimiter an attacker injects is
+            neutralised rather than trusted.
           </li>
           <li>
             <strong>Reported, never obeyed.</strong> Instruction-shaped text raises a warning, and

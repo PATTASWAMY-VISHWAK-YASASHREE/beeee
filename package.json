@@ -8,9 +8,21 @@
   "engines": {
     "node": ">=20.11"
   },
-  "main": "src/bee-index.ts",
+  "main": "dist/bee-index.js",
+  "types": "dist/bee-index.d.ts",
+  "files": [
+    "dist",
+    "skills",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
     "start": "tsx src/bee-index.ts",
+    "start:built": "node dist/bee-index.js",
     "dev": "tsx watch src/bee-index.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -39,7 +51,7 @@
   },
   "devDependencies": {
     "@types/express": "^5.0.0",
-    "@types/node": "^22.10.2",
+    "@types/node": "^20.11.0",
     "tsx": "^4.23.15",
     "typescript": "^5.9.3",
     "vite": "^7.3.6",

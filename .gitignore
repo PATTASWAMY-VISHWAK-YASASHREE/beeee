@@ -2,10 +2,23 @@ node_modules/
 dist/
 *.log
 .DS_Store
+# Every env-file variant, not just the two common names. `.env.production` or
+# `.env.staging` would otherwise be tracked silently, and this project reads real
+# bearer tokens (BEE_BRIDGE_TOKEN, BEE_MCP_HTTP_TOKEN). Git history keeps a
+# secret long after `git rm`, so the omission is expensive.
 .env
-.env.local
+.env.*
+!.env.example
 coverage/
 .vitest/
+# Root-anchored: an unscoped `data/` matches src/data or docs/data too, which
+# would silently drop a real first-party directory or a checked-in fixture.
+/data/
+/*.sqlite
+# Generated test state. Written by tests/durability.test.ts and normally removed
+# in an afterAll hook - but a crash or Ctrl-C leaves it behind, and the next
+# `git add -A` would commit runtime output.
+.test-state-*/
 
 # A synced Bee export is the user's own conversation data. It must never be
 # committed, and this is the one .gitignore rule here that matters for safety

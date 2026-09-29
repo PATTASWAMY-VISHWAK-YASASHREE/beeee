@@ -70,7 +70,24 @@ npm run typecheck
 npm run smoke              # 30 end-to-end checks over real HTTP
 npm run smoke:auth         # 6 auth checks with BEE_BRIDGE_TOKEN set
 npm run verify:bee         # check this against a real Bee CLI
+npm run build              # compile to dist/ (no tsx needed at runtime)
 ```
+
+`npm start` runs the TypeScript directly through `tsx`, which is a **dev**
+dependency — convenient for a clone, but it is not present after
+`npm install --omit=dev`. For a deployment that installs without dev
+dependencies, compile once and run the output:
+
+```bash
+npm run build
+npm run start:built        # node dist/bee-index.js
+```
+
+`main` and `types` point at `dist/`, and a `files` allowlist keeps the published
+package to the build output, the Agent Skill, and the docs — rather than packing
+the source tree, the smoke harnesses, and anything local that happens to be in
+the directory.
+
 
 ## Verification status — read this before trusting anything above
 
