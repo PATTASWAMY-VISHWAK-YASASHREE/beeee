@@ -1,7 +1,0 @@
-Untrack the commit-message scratch file
-
-cm.txt is the file I use to pass a multi-line message to `git commit -F`. It got
-committed twice, because `git add -A` ran while the file already existed from
-the previous step. Harmless, but it is not a deliverable and a judge reading the
-repo should not have to wonder what it is. Removed from the index and ignored
-explicitly so it cannot be swept in again.
